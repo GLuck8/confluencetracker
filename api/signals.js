@@ -46,7 +46,7 @@ async function confluenceSignals({ minInsiderBuy, minContractVal, minScore, days
   const endDate = new Date().toISOString().slice(0, 10)
 
   // Step 1: fetch large contracts
-  const awards = await fetchAwards({ startDate, endDate, minVal: minContractVal, limit: 150 })
+  const awards = await fetchAwards({ startDate, endDate, minVal: minContractVal, limit: 100 })
   if (awards.length === 0) return []
 
   // Step 2: load EDGAR ticker index (cached)

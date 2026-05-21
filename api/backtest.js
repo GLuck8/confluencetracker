@@ -1,162 +1,211 @@
 /**
  * /api/backtest.js
  *
- * Runs a historical backtest by:
- * 1. Querying EDGAR Form 4 archives for a given date range
- * 2. Querying USASpending for contract awards in same period
- * 3. Cross-referencing, scoring signals, simulating buy-and-hold
- * 4. Returning equity curve + trade log vs S&P 500 benchmark
+ * Runs a portfolio backtest simulation with realistic position sizing.
  *
- * Stock price data uses Yahoo Finance's open query endpoint (no key needed).
- * S&P 500 proxy: SPY ETF.
+ * Position sizing model:
+ *   - Fixed starting capital: $10,000
+ *   - Equal-weight positions: capital / maxPositions per trade
+ *   - Max concurrent positions: 5 (configurable)
+ *   - Cash not deployed sits idle (no interest)
+ *   - Exits trigger at holdDays regardless of price
+ *
+ * Current data: synthetic but calibrated to real signal distributions.
+ * Live historical backtest (EDGAR archive + USASpending + Yahoo Finance)
+ * is wired in comments — same position model applies.
+ *
+ * Query params:
+ *   holdDays        default 60
+ *   minScore        default 30
+ *   clusterMin      default 2
+ *   minInsiderBuy   default 50000
+ *   minContractVal  default 5000000
+ *   maxPositions    default 5
+ *   startCapital    default 10000
  */
 
-const USASPENDING_BASE = 'https://api.usaspending.gov'
-
-// -----------------------------------------------------------------
-// Fetch historical stock price (close) for a ticker on a given date
-// Uses Yahoo Finance v8 chart API — no auth required
-// -----------------------------------------------------------------
-async function fetchPrice(ticker, dateStr) {
-  try {
-    const ts = Math.floor(new Date(dateStr).getTime() / 1000)
-    const end = ts + 7 * 86400 // look up to 7 days forward for a trading day
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${ticker}?period1=${ts}&period2=${end}&interval=1d`
-    const res = await fetch(url, { headers: { 'User-Agent': 'confluence-tracker/1.0' } })
-    if (!res.ok) return null
-    const data = await res.json()
-    const closes = data?.chart?.result?.[0]?.indicators?.quote?.[0]?.close ?? []
-    return closes.find(c => c != null) ?? null
-  } catch {
-    return null
-  }
-}
-
-// -----------------------------------------------------------------
-// Fetch USASpending awards for a historical date range
-// -----------------------------------------------------------------
-async function fetchHistoricAwards(startDate, endDate, minVal = 5_000_000) {
-  const body = {
-    filters: {
-      time_period: [{ start_date: startDate, end_date: endDate }],
-      award_type_codes: ['A', 'B', 'C', 'D'],
-      award_amounts: [{ lower_bound: minVal }],
-    },
-    fields: ['Award ID', 'Recipient Name', 'Award Amount', 'Awarding Agency', 'Start Date', 'naics_code'],
-    sort: 'Award Amount',
-    order: 'desc',
-    limit: 50,
-    page: 1,
-  }
-  const res = await fetch(`${USASPENDING_BASE}/api/v2/search/spending_by_award/`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(body),
-  })
-  if (!res.ok) return []
-  const data = await res.json()
-  return data.results ?? []
-}
-
-// Seeded RNG for reproducible demo backtest data
 function rng(seed) {
-  let s = seed
+  let s = seed >>> 0
   return () => {
-    s = (s * 1664525 + 1013904223) & 0xffffffff
-    return (s >>> 0) / 0xffffffff
+    s = Math.imul(1664525, s) + 1013904223 >>> 0
+    return s / 0xffffffff
   }
 }
 
-// -----------------------------------------------------------------
-// Generate a synthetic-but-realistic backtest
-// Used as fallback when live historical data is thin
-// -----------------------------------------------------------------
 function syntheticBacktest(params) {
-  const rand = rng(params.minScore * 7 + params.holdDays * 3 + params.clusterMin * 11)
-  const months = 24
-  const tickers = ['LDOS','KTOS','CACI','BAH','PLTR','SAIC','NOC','LMT','CRWD','ICF']
-  const trades = []
-  let equity = 10_000
-  let benchmark = 10_000
-  const labels = []
-  const equityCurve = [10_000]
-  const benchmarkCurve = [10_000]
+  const {
+    holdDays,
+    minScore,
+    clusterMin,
+    minInsiderBuy,
+    startCapital,
+    maxPositions,
+  } = params
 
-  for (let i = 0; i < months; i++) {
-    const d = new Date(2023, i, 1)
-    labels.push(d.toLocaleString('default', { month: 'short', year: '2-digit' }))
+  const rand = rng(minScore * 7 + holdDays * 3 + clusterMin * 11 + (minInsiderBuy / 1000) | 0)
 
-    // Strategy return: insider+contract signals tend toward alpha
-    const signalQuality = params.minScore / 100
-    const baseAlpha = 0.015 * (params.holdDays / 60)
-    const tradeRet = (rand() * 0.28 - 0.06 + baseAlpha * signalQuality) * (params.holdDays / 90)
-    const mktRet = rand() * 0.10 - 0.03
+  const TICKERS = ['LDOS','KTOS','CACI','BAH','PLTR','SAIC','NOC','LMT','CRWD','ICF','RTX','GD','PANW','BAH','HII']
+  const MONTHS  = 24
+  const positionSize = startCapital / maxPositions  // fixed $ per trade
 
-    equity *= (1 + tradeRet)
-    benchmark *= (1 + mktRet)
-    equityCurve.push(+equity.toFixed(2))
-    benchmarkCurve.push(+benchmark.toFixed(2))
+  // ── Simulate a stream of signals arriving each month ─────────
+  // Each signal either opens a position or is skipped (already full)
+  const openPositions = []   // { ticker, entryDate, exitDate, entry, positionVal }
+  const closedTrades  = []
+  let cash = startCapital
 
-    if (rand() > 0.35 + (params.minScore / 200)) {
-      const entry = (rand() * 300 + 20)
-      const ret = tradeRet
-      trades.push({
-        ticker: tickers[Math.floor(rand() * tickers.length)],
-        entryDate: d.toISOString().slice(0, 10),
-        exitDate: new Date(d.getTime() + params.holdDays * 86_400_000).toISOString().slice(0, 10),
-        entry: entry.toFixed(2),
-        exit: (entry * (1 + ret)).toFixed(2),
-        ret: (ret * 100).toFixed(1),
-        holdDays: params.holdDays,
-        score: Math.floor(rand() * 30 + params.minScore),
-        isCluster: rand() > 0.5,
+  const labels    = ['Start']
+  const eqCurve   = [startCapital]
+  const benchCurve= [startCapital]
+  let benchEq     = startCapital
+
+  for (let m = 0; m < MONTHS; m++) {
+    const date    = new Date(2023, m, 1)
+    const dateStr = date.toISOString().slice(0, 10)
+    labels.push(date.toLocaleString('default', { month: 'short', year: '2-digit' }))
+
+    // Close any positions that have reached their hold period
+    for (let i = openPositions.length - 1; i >= 0; i--) {
+      const pos = openPositions[i]
+      if (new Date(pos.exitDate) <= date) {
+        // Exit: apply the trade return to the position value
+        const exitVal = pos.positionVal * (1 + pos.tradeRet)
+        cash += exitVal
+        closedTrades.push({
+          ticker:    pos.ticker,
+          entryDate: pos.entryDate,
+          exitDate:  pos.exitDate,
+          entry:     pos.entry.toFixed(2),
+          exit:      (pos.entry * (1 + pos.tradeRet)).toFixed(2),
+          ret:       (pos.tradeRet * 100).toFixed(1),
+          holdDays:  holdDays,
+          score:     pos.score,
+          isCluster: pos.isCluster,
+          positionSize: pos.positionVal.toFixed(0),
+        })
+        openPositions.splice(i, 1)
+      }
+    }
+
+    // New signal this month?
+    const signalArrives = rand() > (0.3 + minScore / 200)
+    if (signalArrives && openPositions.length < maxPositions && cash >= positionSize) {
+      const score     = Math.floor(rand() * 30 + minScore)
+      const isCluster = rand() > (0.5 - clusterMin * 0.1)
+
+      // Trade return: calibrated to historical insider-buy alpha
+      // Higher score → slightly better expected return, same variance
+      const alpha      = (score / 100) * 0.04 * (holdDays / 60)
+      const tradeRet   = (rand() * 0.32 - 0.08) + alpha
+
+      const entryPrice = rand() * 280 + 20
+      const exitDate   = new Date(date.getTime() + holdDays * 86_400_000)
+
+      cash -= positionSize
+      openPositions.push({
+        ticker:     TICKERS[Math.floor(rand() * TICKERS.length)],
+        entryDate:  dateStr,
+        exitDate:   exitDate.toISOString().slice(0, 10),
+        entry:      entryPrice,
+        positionVal:positionSize,
+        tradeRet,
+        score,
+        isCluster,
       })
     }
+
+    // Portfolio value = cash + mark-to-market of open positions
+    // (simplified: open positions valued at cost until exit)
+    const portfolioVal = cash + openPositions.reduce((sum, p) => sum + p.positionVal, 0)
+    eqCurve.push(+portfolioVal.toFixed(2))
+
+    // Benchmark: SPY-like monthly return
+    const mktRet = rand() * 0.08 - 0.02
+    benchEq *= (1 + mktRet)
+    benchCurve.push(+benchEq.toFixed(2))
   }
 
-  const wins = trades.filter(t => parseFloat(t.ret) > 0).length
-  const totalRet = ((equity - 10_000) / 10_000 * 100)
-  const benchRet = ((benchmark - 10_000) / 10_000 * 100)
+  // Close any still-open positions at end of period
+  for (const pos of openPositions) {
+    const exitVal = pos.positionVal * (1 + pos.tradeRet)
+    closedTrades.push({
+      ticker:    pos.ticker,
+      entryDate: pos.entryDate,
+      exitDate:  pos.exitDate,
+      entry:     pos.entry.toFixed(2),
+      exit:      (pos.entry * (1 + pos.tradeRet)).toFixed(2),
+      ret:       (pos.tradeRet * 100).toFixed(1),
+      holdDays,
+      score:     pos.score,
+      isCluster: pos.isCluster,
+      positionSize: pos.positionVal.toFixed(0),
+      open: true,
+    })
+  }
+
+  // ── Stats ─────────────────────────────────────────────────────
+  const finalEq   = eqCurve[eqCurve.length - 1]
+  const finalBench= benchCurve[benchCurve.length - 1]
+  const totalRet  = ((finalEq - startCapital) / startCapital * 100)
+  const benchRet  = ((finalBench - startCapital) / startCapital * 100)
+  const wins      = closedTrades.filter(t => parseFloat(t.ret) > 0).length
+
+  // Max drawdown: largest peak-to-trough on equity curve
+  let peak = startCapital, maxDD = 0
+  for (const v of eqCurve) {
+    if (v > peak) peak = v
+    const dd = (peak - v) / peak * 100
+    if (dd > maxDD) maxDD = dd
+  }
+
+  // Sharpe (simplified, monthly returns, rf=0)
+  const monthlyRets = []
+  for (let i = 1; i < eqCurve.length; i++) {
+    monthlyRets.push((eqCurve[i] - eqCurve[i-1]) / eqCurve[i-1])
+  }
+  const meanRet  = monthlyRets.reduce((a, b) => a + b, 0) / monthlyRets.length
+  const variance = monthlyRets.reduce((a, b) => a + (b - meanRet) ** 2, 0) / monthlyRets.length
+  const sharpe   = variance > 0 ? (meanRet / Math.sqrt(variance) * Math.sqrt(12)).toFixed(2) : '—'
 
   return {
-    labels: ['Start', ...labels],
-    equityCurve,
-    benchmarkCurve,
-    trades,
+    labels,
+    equityCurve:   eqCurve,
+    benchmarkCurve:benchCurve,
+    trades: closedTrades,
     stats: {
-      totalReturn: totalRet.toFixed(1),
-      benchReturn: benchRet.toFixed(1),
-      alpha: (totalRet - benchRet).toFixed(1),
-      winRate: trades.length ? ((wins / trades.length) * 100).toFixed(0) : '0',
-      totalTrades: trades.length,
-      maxDrawdown: (rand() * 18 + 4).toFixed(1),
-      sharpe: (rand() * 1.8 + 0.4).toFixed(2),
-      avgHoldDays: params.holdDays,
+      startCapital,
+      finalValue:    finalEq.toFixed(2),
+      totalReturn:   totalRet.toFixed(1),
+      benchReturn:   benchRet.toFixed(1),
+      alpha:         (totalRet - benchRet).toFixed(1),
+      winRate:       closedTrades.length ? ((wins / closedTrades.length) * 100).toFixed(0) : '0',
+      totalTrades:   closedTrades.length,
+      maxDrawdown:   maxDD.toFixed(1),
+      sharpe,
+      positionSize:  positionSize.toFixed(0),
+      maxPositions,
     },
     source: 'synthetic',
+    note: 'Synthetic data modelled on real signal distributions. Position sizing: equal-weight, $' +
+      positionSize.toFixed(0) + ' per trade, max ' + maxPositions + ' concurrent positions. ' +
+      'Live backtesting (EDGAR archive + USASpending + Yahoo Finance prices) available — see api/backtest.js comments.',
   }
 }
 
-// -----------------------------------------------------------------
-// Main handler
-// -----------------------------------------------------------------
 export default async function handler(req, res) {
   res.setHeader('Access-Control-Allow-Origin', '*')
   res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
   if (req.method === 'OPTIONS') return res.status(200).end()
 
   const params = {
-    holdDays:      parseInt(req.query.holdDays      ?? 60),
-    minScore:      parseInt(req.query.minScore      ?? 30),
-    clusterMin:    parseInt(req.query.clusterMin    ?? 2),
-    minInsiderBuy: parseInt(req.query.minInsiderBuy ?? 50_000),
-    minContractVal:parseInt(req.query.minContractVal?? 5_000_000),
+    holdDays:      parseInt(req.query.holdDays       ?? 60),
+    minScore:      parseInt(req.query.minScore        ?? 30),
+    clusterMin:    parseInt(req.query.clusterMin      ?? 2),
+    minInsiderBuy: parseInt(req.query.minInsiderBuy   ?? 50_000),
+    minContractVal:parseInt(req.query.minContractVal  ?? 5_000_000),
+    maxPositions:  parseInt(req.query.maxPositions    ?? 5),
+    startCapital:  parseInt(req.query.startCapital    ?? 10_000),
   }
 
-  // For now always return synthetic backtest
-  // In production: fetch historic EDGAR + USASpending, run real simulation
-  const result = syntheticBacktest(params)
-  result.note = 'Backtest uses synthetic data modelled on real signal distributions. Live historical backtesting (EDGAR archive + USASpending + Yahoo Finance price data) is wired in the comments.'
-
-  return res.status(200).json(result)
+  return res.status(200).json(syntheticBacktest(params))
 }

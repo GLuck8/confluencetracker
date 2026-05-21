@@ -73,3 +73,16 @@
 .table tr:last-child td { border-bottom: none; }
 
 .btNote { margin-top: .75rem; font-size: 11px; color: var(--text3); line-height: 1.5; font-style: italic; }
+
+.tradeLogHeader {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: .75rem;
+  flex-wrap: wrap;
+  gap: .5rem;
+}
+.tradeLogMeta {
+  font-size: 11px;
+  color: var(--text3);
+}
