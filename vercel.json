@@ -1,0 +1,17 @@
+{
+  "rewrites": [
+    { "source": "/api/:path*", "destination": "/api/:path*" }
+  ],
+  "functions": {
+    "api/**/*.js": {
+      "memory": 512,
+      "maxDuration": 30
+    }
+  },
+  "crons": [
+    {
+      "path": "/api/cron?secret=IHEYDUSOKJDKSKSJEIEMISNSJHDF89778DDKNKD88D",
+      "schedule": "0 7 * * *"
+    }
+  ]
+}

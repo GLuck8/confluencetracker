@@ -1,0 +1,88 @@
+.wrap { display: flex; flex-direction: column; gap: 1rem; }
+
+.disclaimer {
+  background: var(--amber-bg);
+  color: var(--amber-text);
+  border-radius: var(--radius-sm);
+  padding: .75rem 1rem;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.sectionTitle {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text3);
+  font-weight: 500;
+  margin-bottom: .75rem;
+}
+
+.watchSection {
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+}
+.empty { font-size: 13px; color: var(--text3); text-align: center; padding: 1rem 0; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--surface2);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 8px;
+  font-size: 13px;
+}
+.chipTicker { font-weight: 600; font-family: var(--font-mono); }
+.chipScore { font-size: 11px; font-weight: 500; }
+.chipRemove { background: none; border: none; color: var(--text3); font-size: 14px; cursor: pointer; line-height: 1; padding: 0 2px; }
+.chipRemove:hover { color: var(--red); }
+
+.exportCard {
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+}
+.exportRow {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: .75rem 0;
+  border-bottom: 0.5px solid var(--border);
+}
+.exportRow:last-child { border-bottom: none; }
+.exportName { font-size: 13px; font-weight: 500; margin-bottom: 2px; }
+.exportDesc { font-size: 12px; color: var(--text2); }
+
+.btn {
+  padding: 6px 14px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  border: 0.5px solid var(--border-strong);
+  background: var(--surface2);
+  color: var(--text);
+  white-space: nowrap;
+  transition: background .12s;
+  flex-shrink: 0;
+}
+.btn:hover { background: var(--surface); }
+.btn:disabled { opacity: .4; cursor: not-allowed; }
+.btn.primary { background: var(--text); color: var(--surface); border-color: transparent; }
+.btn.primary:hover { opacity: .85; }
+.btn.primary:disabled { opacity: .3; cursor: not-allowed; }
+
+.ibkrGuide {
+  background: var(--surface);
+  border: 0.5px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+}
+.steps { padding-left: 1.25rem; display: flex; flex-direction: column; gap: .4rem; font-size: 13px; color: var(--text2); }
+.steps li strong { color: var(--text); }
+.steps li code { font-family: var(--font-mono); font-size: 12px; background: var(--surface2); padding: 1px 4px; border-radius: 3px; }
