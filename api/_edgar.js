@@ -171,11 +171,22 @@ export async function scanAllForm4s(daysBack = 30, minEstimatedBuy = 50_000) {
   const from = new Date(Date.now() - daysBack * 86_400_000).toISOString().slice(0, 10)
   const to   = new Date().toISOString().slice(0, 10)
 
-  const url = `${EFTS}/LATEST/search-index?q=%22Open+Market%22` +
-    `&forms=4&dateRange=custom&startdt=${from}&enddt=${to}`
+  // Use correct EFTS parameter format with URLSearchParams
+  const qs = new URLSearchParams({
+    q:         '"Open Market"',
+    forms:     '4',
+    dateRange: 'custom',
+    startdt:   from,
+    enddt:     to,
+    size:      '100',
+  })
 
+  const url = `${EFTS}/LATEST/search-index?${qs}`
   const res = await fetch(url, { headers: { 'User-Agent': UA } })
-  if (!res.ok) return []
+  if (!res.ok) {
+    console.error(`EFTS scan failed: ${res.status}`)
+    return []
+  }
 
   const data = await res.json()
   const hits = data.hits?.hits ?? []

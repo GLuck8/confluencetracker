@@ -110,6 +110,24 @@ export default async function handler(req, res) {
       : `${withForm4.length} ticker(s) have both a contract award and recent Form 4 activity.`,
   }
 
+  // ── Stage 5: Form 4 scan test (if mode=form4) ───────────────────
+  if (req.query.mode === 'form4') {
+    try {
+      const { scanAllForm4s } = await import('./_edgar.js')
+      const entities = await scanAllForm4s(daysBack, 25_000)
+      report.stages.form4Scan = {
+        ok: true,
+        entitiesFound: entities.length,
+        sample: entities.slice(0, 10).map(e => ({ name: e.name, count: e.count, latestDate: e.latestDate })),
+        diagnosis: entities.length === 0
+          ? 'EFTS returned no Form 4 hits — check the URL or try a longer daysBack window'
+          : `Found ${entities.length} entities with recent open-market Form 4 activity`,
+      }
+    } catch (err) {
+      report.stages.form4Scan = { ok: false, error: err.message }
+    }
+  }
+
   report.conclusion = withForm4.length > 0
     ? `Pipeline working — ${withForm4.length} confluence match(es) found. If signals tab shows demo, check minScore threshold.`
     : matched.length > 0
@@ -118,3 +136,6 @@ export default async function handler(req, res) {
 
   return res.status(200).json(report)
 }
+
+// Export a secondary handler for Form 4 scan testing
+// GET /api/debug?mode=form4&daysBack=30
