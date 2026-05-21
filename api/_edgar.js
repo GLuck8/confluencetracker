@@ -47,7 +47,7 @@ export async function getTickerIndex() {
   const now = Date.now()
   if (_tickerIndex && now - _tickerIndexAt < TTL) return _tickerIndex
 
-  const res = await fetch(`${EDGAR}/files/company_tickers.json`, {
+  const res = await fetch(`https://www.sec.gov/files/company_tickers.json`, {
     headers: { 'User-Agent': UA },
   })
   if (!res.ok) throw new Error(`EDGAR ticker index: ${res.status}`)
